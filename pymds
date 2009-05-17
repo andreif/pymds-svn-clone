@@ -1,0 +1,219 @@
+#!/usr/bin/python
+
+# Copyright (c) 2009 Tom Pinckney
+#
+# Permission is hereby granted, free of charge, to any person
+# obtaining a copy of this software and associated documentation
+# files (the "Software"), to deal in the Software without
+# restriction, including without limitation the rights to use,
+# copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the
+# Software is furnished to do so, subject to the following
+# conditions:
+#
+#     The above copyright notice and this permission notice shall be
+#     included in all copies or substantial portions of the Software.
+#
+#     THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+#     EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+#     OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+#     NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+#     HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+#     WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+#     FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+#     OTHER DEALINGS IN THE SOFTWARE.
+
+import sys
+import socket
+import struct
+import ConfigParser
+import signal
+
+from utils import *
+
+class DnsError(Exception):
+    pass
+
+def serve():
+    udps = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udps.bind((_listen_host, _listen_port))
+    #ns_resource_records, ar_resource_records = compute_name_server_resources(_name_servers)
+    ns_resource_records = ar_resource_records = []
+    while True:
+        try:
+            req_pkt, src_addr = udps.recvfrom(512)   # max UDP DNS pkt size
+        except socket.error:
+            continue
+        qid = None
+        try:
+            qid, question, qtype, qclass = parse_request(req_pkt)
+            domain_components = len(_domain)            
+            if question[-domain_components:] != _domain:
+                raise Exception("query is not for our domain")
+            if len(question[:-domain_components]) > 1:
+                raise Exception("query is for sub domain of our domain")
+            query = question[:-domain_components]
+            if len(query) == 1:
+                query = query[0]
+            else:
+                query = ''
+            rcode, an_resource_records = _source.get_response(query, qtype, qclass, src_addr)
+            if rcode == 0:
+                for f in _filters:
+                    an_resource_records = f.filter(query, qtype, qclass, src_addr, an_resource_records)
+            resp_pkt = format_response(qid, question, qtype, qclass, rcode, an_resource_records, ns_resource_records, ar_resource_records)
+        except:
+            raise
+            if qid:
+                resp_pkt = error_response(qid)
+            else:
+                continue
+        udps.sendto(resp_pkt, src_addr)
+
+def compute_name_server_resources(name_servers):
+    ns = []
+    ar = []
+    for name_server, ip, ttl in name_servers:
+        ns.append({'qtype':2, 'qclass':1, 'ttl':ttl, 'rdata':labels2str(name_server)})
+        ar.append({'qtype':1, 'qclass':1, 'ttl':ttl, 'rdata':struct.pack("!I", ip)})
+    return ns, ar
+        
+def parse_request(packet):
+    hdr_len = 12
+    header = packet[:hdr_len]
+    qid, flags, qdcount, _, _, _ = struct.unpack('!HHHHHH', header)
+    qr = (flags >> 15) & 0x1
+    opcode = (flags >> 11) & 0xf
+    rd = (flags >> 8) & 0x1
+    #print "qid", qid, "qdcount", qdcount, "qr", qr, "opcode", opcode, "rd", rd
+    if qr != 0 or opcode != 0 or qdcount == 0:
+        raise DnsError("Invalid query")
+    body = packet[hdr_len:]
+    labels = []
+    offset = 0
+    while True:
+        label_len, = struct.unpack('!B', body[offset:offset+1])
+        offset += 1
+        if label_len & 0xc0:
+            raise DnsError("Invalid label length %d" % label_len)
+        if label_len == 0:
+            break
+        label = body[offset:offset+label_len]
+        offset += label_len
+        labels.append(label)
+    qtype, qclass= struct.unpack("!HH", body[offset:offset+4])
+    if qclass != 1:
+        raise DnsError("Invalid class: " + qclass)
+    return (qid, labels, qtype, qclass)
+
+def format_response(qid, question, qtype, qclass, rcode, an_resource_records, ns_resource_records, ar_resource_records):
+    resources = []
+    resources.extend(an_resource_records)
+    num_an_resources = len(an_resource_records)
+    num_ns_resources = num_ar_resources = 0
+    if rcode == 0:
+        resources.extend(ns_resource_records)
+        resources.extend(ar_resource_records)
+        num_ns_resources = len(ns_resource_records)
+        num_ar_resources = len(ar_resource_records)
+    pkt = format_header(qid, rcode, num_an_resources, num_ns_resources, num_ar_resources)
+    pkt += format_question(question, qtype, qclass)
+    for resource in resources:
+        pkt += format_resource(resource, question)
+    return pkt
+
+def format_header(qid, rcode, ancount, nscount, arcount):
+    flags = 0
+    flags |= (1 << 15)
+    flags |= (1 << 10)
+    flags |= (rcode & 0xf)
+    hdr = struct.pack("!HHHHHH", qid, flags, 1, ancount, nscount, arcount)
+    return hdr
+
+def format_question(question, qtype, qclass):
+    q = labels2str(question)
+    q += struct.pack("!HH", qtype, qclass)
+    return q
+
+def format_resource(resource, question):
+    r = ''
+    r += labels2str(question)
+    r += struct.pack("!HHIH", resource['qtype'], resource['qclass'], resource['ttl'], len(resource['rdata']))
+    r += resource['rdata']
+    return r
+
+def read_config():
+    global _listen_port, _listen_host, _domain, _name_servers, _source, _filters
+    config = ConfigParser.SafeConfigParser()
+    try:
+        config.read(_cnf)
+        config_values = config.items("default")    
+    except:
+        die("Error reading config file %s\n" % _cnf)
+
+    for var, value in config_values:
+        if var == "port":
+            _listen_port = int(value)
+        elif var == "host":
+            _listen_host = value
+        elif var == "domain":
+            _domain = value.split(".")
+        elif var == "name servers":
+            split_name_servers = value.split(":")
+            num_split_name_servers = len(split_name_servers)
+            for i in range(0,num_split_name_servers,3):
+                server = split_name_servers[i]
+                ip = split_name_servers[i+1]
+                ttl = int(split_name_servers[i+2])
+                _name_servers.append((server.split("."), ipstr2int(ip), ttl))
+        elif var == 'source':
+            module_and_args = value.split(":")
+            module = module_and_args[0]
+            args = module_and_args[1:]
+            _source = __import__(module, {}, {}, [''])
+            _source.init(*args)
+        elif var == 'filters':
+            for module_and_args_str in value.split():
+                module_and_args = module_and_args_str.split(":")
+                module = module_and_args[0]
+                args = module_and_args[1:]
+                m = __import__(module, {}, {}, [''])            
+                m.init(*args)
+                _filters.append(m)
+        else:
+            die("unrecognized paramter in conf file: %s\n" % var)
+
+    if not _domain or not _source:
+        die("must specify domain name, domain name servers and source in conf file\n")
+    sys.stderr.write("read configuration from %s\n" % _cnf)
+
+def reread(signum, frame):
+    read_config()
+    
+def die(msg):
+    sys.stderr.write(msg)
+    sys.exit(-1)
+
+def usage(cmd):
+    die("Usage: %s [conf file]\n" % cmd)
+
+_cnf = "pymds.conf"
+_listen_port=53
+_listen_host=''
+_domain=[]
+_name_servers=[]
+_source=None
+_filters=[]
+
+argc = len(sys.argv)
+if argc == 1:
+    pass
+elif argc == 2:
+    _cnf = sys.argv[1]
+else:
+    usage(sys.argv[0])
+
+read_config()
+signal.signal(signal.SIGHUP, reread)
+sys.stdout.write("%s starting on port %d serving for domain %s\n" % (sys.argv[0], _listen_port, ".".join(_domain)))
+serve()

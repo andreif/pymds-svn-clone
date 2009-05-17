@@ -1,0 +1,72 @@
+# Copyright (c) 2009 Tom Pinckney
+#
+# Permission is hereby granted, free of charge, to any person
+# obtaining a copy of this software and associated documentation
+# files (the "Software"), to deal in the Software without
+# restriction, including without limitation the rights to use,
+# copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the
+# Software is furnished to do so, subject to the following
+# conditions:
+#
+#     The above copyright notice and this permission notice shall be
+#     included in all copies or substantial portions of the Software.
+#
+#     THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+#     EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+#     OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+#     NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+
+
+#
+# A pymds source filter.
+#
+# pymdsfile answers queries by consulting a text database.
+#
+# initializer: a single argument specifying the name of the database
+# file.  See the example pinckney.com.txt database for documentation
+# on the format of this file.
+#
+
+import struct
+
+from utils import *
+
+_answers = None
+
+def init(filename):
+    global _answers
+    _answers = {}
+    f = open(filename, "r")
+    for line in f.readlines():
+        line = line.strip()        
+        if line and line[0] != '#':
+            question, type, value = line.split()
+            if question == '@':
+                question = ''
+            if type == 'A':
+                answer = struct.pack("!I", ipstr2int(value))
+                qtype = 1
+            if type == 'NS':
+                answer = labels2str(value.split("."))
+                qtype = 2
+            elif type == 'CNAME':
+                answer = labels2str(value.split("."))
+                qtype = 5
+            elif type == 'TXT':
+                answer = label2str(value)
+                qtype = 16
+            elif type == 'MX':
+                preference, domain = value.split(":")
+                answer = struct.pack("!H", int(preference))
+                answer += labels2str(domain.split("."))
+                qtype = 15
+            _answers.setdefault(question, {}).setdefault(qtype, []).append(answer)
+    f.close()
+
+def get_response(question, qtype, qclass, src_addr):
+    if question in _answers and qtype in _answers[question]:
+        results = [{'qtype': qtype, 'qclass':qclass, 'ttl': 500, 'rdata': answer} for answer in _answers[question][qtype]]
+        return 0, results
+    else:
+        return 3, []
