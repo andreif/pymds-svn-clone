@@ -28,6 +28,7 @@ import socket
 import struct
 import ConfigParser
 import signal
+import getopt
 
 from utils import *
 
@@ -36,7 +37,7 @@ class DnsError(Exception):
 
 def serve():
     udps = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    udps.bind((_listen_host, _listen_port))
+    udps.bind((listen_host, listen_port))
     #ns_resource_records, ar_resource_records = compute_name_server_resources(_name_servers)
     ns_resource_records = ar_resource_records = []
     while True:
@@ -47,21 +48,18 @@ def serve():
         qid = None
         try:
             qid, question, qtype, qclass = parse_request(req_pkt)
-            domain_components = len(_domain)            
-            if question[-domain_components:] != _domain:
+            found = False
+            for config in config_files.values():
+                if question[1:] == config['domain']:
+                    rcode, an_resource_records = config['source'].get_response(question, qtype, qclass, src_addr)
+                    if rcode == 0 and 'filters' in config:
+                        for f in config['filters']:
+                            an_resource_records = f.filter(question, qtype, qclass, src_addr, an_resource_records)
+                    resp_pkt = format_response(qid, question, qtype, qclass, rcode, an_resource_records, ns_resource_records, ar_resource_records)
+                    found = True
+                    break
+            if not found:
                 raise Exception("query is not for our domain")
-            if len(question[:-domain_components]) > 1:
-                raise Exception("query is for sub domain of our domain")
-            query = question[:-domain_components]
-            if len(query) == 1:
-                query = query[0]
-            else:
-                query = ''
-            rcode, an_resource_records = _source.get_response(query, qtype, qclass, src_addr)
-            if rcode == 0:
-                for f in _filters:
-                    an_resource_records = f.filter(query, qtype, qclass, src_addr, an_resource_records)
-            resp_pkt = format_response(qid, question, qtype, qclass, rcode, an_resource_records, ns_resource_records, ar_resource_records)
         except:
             raise
             if qid:
@@ -143,49 +141,49 @@ def format_resource(resource, question):
     return r
 
 def read_config():
-    global _listen_port, _listen_host, _domain, _name_servers, _source, _filters
-    config = ConfigParser.SafeConfigParser()
-    try:
-        config.read(_cnf)
-        config_values = config.items("default")    
-    except:
-        die("Error reading config file %s\n" % _cnf)
+    for config_file in config_files:
+        config_files[config_file] = config = {}
+        config_parser = ConfigParser.SafeConfigParser()
+        try:
+            config_parser.read(config_file)
+            config_values = config_parser.items("default")    
+        except:
+            die("Error reading config file %s\n" % config_file)
 
-    for var, value in config_values:
-        if var == "port":
-            _listen_port = int(value)
-        elif var == "host":
-            _listen_host = value
-        elif var == "domain":
-            _domain = value.split(".")
-        elif var == "name servers":
-            split_name_servers = value.split(":")
-            num_split_name_servers = len(split_name_servers)
-            for i in range(0,num_split_name_servers,3):
-                server = split_name_servers[i]
-                ip = split_name_servers[i+1]
-                ttl = int(split_name_servers[i+2])
-                _name_servers.append((server.split("."), ipstr2int(ip), ttl))
-        elif var == 'source':
-            module_and_args = value.split(":")
-            module = module_and_args[0]
-            args = module_and_args[1:]
-            _source = __import__(module, {}, {}, [''])
-            _source.init(*args)
-        elif var == 'filters':
-            for module_and_args_str in value.split():
-                module_and_args = module_and_args_str.split(":")
+        for var, value in config_values:
+            if var == "domain":
+                config['domain'] = value.split(".")
+            elif var == "name servers":
+                config['name_servers'] = []
+                split_name_servers = value.split(":")
+                num_split_name_servers = len(split_name_servers)
+                for i in range(0,num_split_name_servers,3):
+                    server = split_name_servers[i]
+                    ip = split_name_servers[i+1]
+                    ttl = int(split_name_servers[i+2])
+                    config['name_servers'].append((server.split("."), ipstr2int(ip), ttl))
+            elif var == 'source':
+                module_and_args = value.split(":")
                 module = module_and_args[0]
                 args = module_and_args[1:]
-                m = __import__(module, {}, {}, [''])            
-                m.init(*args)
-                _filters.append(m)
-        else:
-            die("unrecognized paramter in conf file: %s\n" % var)
+                source_module = __import__(module, {}, {}, [''])
+                source_instance = source_module.Source(*args)
+                config['source'] = source_instance
+            elif var == 'filters':
+                config['filters'] = []
+                for module_and_args_str in value.split():
+                    module_and_args = module_and_args_str.split(":")
+                    module = module_and_args[0]
+                    args = module_and_args[1:]
+                    filter_module = __import__(module, {}, {}, [''])            
+                    filter_instance = filter_module.Filter(*args)
+                    config['filters'].append(filter_instance)
+            else:
+                die("unrecognized paramter in conf file %s: %s\n" % (config_file, var))
 
-    if not _domain or not _source:
-        die("must specify domain name, domain name servers and source in conf file\n")
-    sys.stderr.write("read configuration from %s\n" % _cnf)
+        if 'domain' not in config or 'source' not in config:
+            die("must specify domain name and source in conf file %s\n", config_file)
+        sys.stderr.write("read configuration from %s\n" % config_file)
 
 def reread(signum, frame):
     read_config()
@@ -197,23 +195,32 @@ def die(msg):
 def usage(cmd):
     die("Usage: %s [conf file]\n" % cmd)
 
-_cnf = "pymds.conf"
-_listen_port=53
-_listen_host=''
-_domain=[]
-_name_servers=[]
-_source=None
-_filters=[]
+config_files = {}
+listen_port = 53
+listen_host = ''
 
-argc = len(sys.argv)
-if argc == 1:
-    pass
-elif argc == 2:
-    _cnf = sys.argv[1]
-else:
+try:
+    options, filenames = getopt.getopt(sys.argv[1:], "p:h:")
+except getopt.GetoptError:
     usage(sys.argv[0])
 
+for option, value in options:
+    if option == "-p":
+        listen_port = int(value)
+    elif option == "-h":
+        listen_host = value
+if not filenames:
+    filenames = ['pymds.conf']
+for f in filenames:
+    if f in config_files:
+        raise Exception("repeated configuration")
+    config_files[f] = {}
+
+sys.stdout.write("%s starting on port %d\n" % (sys.argv[0], listen_port))
 read_config()
 signal.signal(signal.SIGHUP, reread)
-sys.stdout.write("%s starting on port %d serving for domain %s\n" % (sys.argv[0], _listen_port, ".".join(_domain)))
+for config in config_files.values():
+    sys.stdout.write("%s: serving for domain %s\n" % (sys.argv[0], ".".join(config['domain'])))
+sys.stdout.flush()
+sys.stderr.flush()
 serve()

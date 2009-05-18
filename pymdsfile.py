@@ -32,41 +32,44 @@ import struct
 
 from utils import *
 
-_answers = None
+class Source(object):
+    def __init__(self, filename):
+        self._answers = {}
+        self._filename = filename
+        self._parse_file()
 
-def init(filename):
-    global _answers
-    _answers = {}
-    f = open(filename, "r")
-    for line in f.readlines():
-        line = line.strip()        
-        if line and line[0] != '#':
-            question, type, value = line.split()
-            if question == '@':
-                question = ''
-            if type == 'A':
-                answer = struct.pack("!I", ipstr2int(value))
-                qtype = 1
-            if type == 'NS':
-                answer = labels2str(value.split("."))
-                qtype = 2
-            elif type == 'CNAME':
-                answer = labels2str(value.split("."))
-                qtype = 5
-            elif type == 'TXT':
-                answer = label2str(value)
-                qtype = 16
-            elif type == 'MX':
-                preference, domain = value.split(":")
-                answer = struct.pack("!H", int(preference))
-                answer += labels2str(domain.split("."))
-                qtype = 15
-            _answers.setdefault(question, {}).setdefault(qtype, []).append(answer)
-    f.close()
+    def _parse_file(self):
+        f = open(self._filename, "r")
+        for line in f.readlines():
+            line = line.strip()        
+            if line and line[0] != '#':
+                question, type, value = line.split()
+                if question == '@':
+                    question = ''
+                if type == 'A':
+                    answer = struct.pack("!I", ipstr2int(value))
+                    qtype = 1
+                if type == 'NS':
+                    answer = labels2str(value.split("."))
+                    qtype = 2
+                elif type == 'CNAME':
+                    answer = labels2str(value.split("."))
+                    qtype = 5
+                elif type == 'TXT':
+                    answer = label2str(value)
+                    qtype = 16
+                elif type == 'MX':
+                    preference, domain = value.split(":")
+                    answer = struct.pack("!H", int(preference))
+                    answer += labels2str(domain.split("."))
+                    qtype = 15
+                self._answers.setdefault(question, {}).setdefault(qtype, []).append(answer)
+        f.close()
 
-def get_response(question, qtype, qclass, src_addr):
-    if question in _answers and qtype in _answers[question]:
-        results = [{'qtype': qtype, 'qclass':qclass, 'ttl': 500, 'rdata': answer} for answer in _answers[question][qtype]]
-        return 0, results
-    else:
-        return 3, []
+    def get_response(self, question, qtype, qclass, src_addr):
+        query = question[0]
+        if query in self._answers and qtype in self._answers[query]:
+            results = [{'qtype': qtype, 'qclass':qclass, 'ttl': 500, 'rdata': answer} for answer in self._answers[query][qtype]]
+            return 0, results
+        else:
+            return 3, []

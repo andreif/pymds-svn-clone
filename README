@@ -33,14 +33,19 @@ Usage
 You will need python 2.5 (which is what I test). Other versions of
 Python may or may not work.
 
-To run using the configuration file pymds.conf in the current
-directory:
+By default, pymds will listen on port 53 on all interfaces. You
+can override the port and/or host to listen on with the -p and
+-h options. 
 
-# python pymds
+By default, pymds will read configuration information from
+a file named pymds.conf in the current directory. If you want
+to specify a different file, list it on the command line. 
 
-To specifiy an alternative location for the configuration file:
+There must be a different configuration file for each domain
+that pymds serves. If you want pymds to serve multiple domains,
+list multiple configuration files on the command line.
 
-# python pymds /some/other/foo.conf
+# pymds [-p port] [-h host] [config1] [config2] ...
 
 If you change a configuration file and want to reload pymds, send it
 SIGHUP.
@@ -48,7 +53,7 @@ SIGHUP.
 Configuration
 --------------
 
-See the pymds.conf file for all the details
+See the examples/ directory for configuration file examples.
 
 Source, reporting bugs, etc
 ---------------------------

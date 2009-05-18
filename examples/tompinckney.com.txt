@@ -22,8 +22,8 @@
 # the order they are listed in this file.
 #
 
-@ NS ns1.pinckney.com
-@ NS ns2.pinckney.com
+@ NS ns1.tompinckney.com
+@ NS ns2.tompinckney.com
 ns1 A 10.10.0.1
 ns2 A 10.20.0.1
 
@@ -33,10 +33,10 @@ www A 10.10.0.3
 www A 10.20.0.3
 db A 10.10.0.4
 db A 10.20.0.4
-img-1 CNAME www.pinckney.com
-img-2 CNAME www.pinckney.com
+img-1 CNAME www.tompinckney.com
+img-2 CNAME www.tompinckney.com
 
 @ TXT spf:foo:bar
-@ MX 0:www.pinckney.com
+@ MX 0:www.tompinckney.com
 
-dev NS ns1.pinckney.com
+dev NS ns1.tompinckney.com
