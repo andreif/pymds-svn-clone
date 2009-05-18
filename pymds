@@ -51,15 +51,20 @@ def serve():
             found = False
             for config in config_files.values():
                 if question[1:] == config['domain']:
-                    rcode, an_resource_records = config['source'].get_response(question, qtype, qclass, src_addr)
-                    if rcode == 0 and 'filters' in config:
-                        for f in config['filters']:
-                            an_resource_records = f.filter(question, qtype, qclass, src_addr, an_resource_records)
-                    resp_pkt = format_response(qid, question, qtype, qclass, rcode, an_resource_records, ns_resource_records, ar_resource_records)
-                    found = True
-                    break
+                    query = question[0]
+                elif question == config['domain']:
+                    query = ''
+                else:
+                    continue
+                rcode, an_resource_records = config['source'].get_response(query, config['domain'], qtype, qclass, src_addr)
+                if rcode == 0 and 'filters' in config:
+                    for f in config['filters']:
+                        an_resource_records = f.filter(query, config['domain'], qtype, qclass, src_addr, an_resource_records)
+                resp_pkt = format_response(qid, question, qtype, qclass, rcode, an_resource_records, ns_resource_records, ar_resource_records)
+                found = True
+                break
             if not found:
-                raise Exception("query is not for our domain")
+                raise Exception("query is not for our domain: %s" % ".".join(question[1:]))
         except:
             raise
             if qid:

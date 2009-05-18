@@ -13,8 +13,7 @@ class Filter(object):
             base = 10
         self._netmask = int(netmask,base)
 
-    def filter(self, query, qtype, qclass, src_addr, an_resource_records):
-        query = query[0]
+    def filter(self, query, domain, qtype, qclass, src_addr, an_resource_records):
         if qtype != 1 or len(an_resource_records) < 2:
             return an_resource_records
         src_ip = ipstr2int(src_addr[0])

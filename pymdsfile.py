@@ -66,8 +66,7 @@ class Source(object):
                 self._answers.setdefault(question, {}).setdefault(qtype, []).append(answer)
         f.close()
 
-    def get_response(self, question, qtype, qclass, src_addr):
-        query = question[0]
+    def get_response(self, query, domain, qtype, qclass, src_addr):
         if query in self._answers and qtype in self._answers[query]:
             results = [{'qtype': qtype, 'qclass':qclass, 'ttl': 500, 'rdata': answer} for answer in self._answers[query][qtype]]
             return 0, results
