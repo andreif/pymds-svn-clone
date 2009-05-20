@@ -44,6 +44,8 @@ class Source(object):
             line = line.strip()        
             if line and line[0] != '#':
                 question, type, value = line.split()
+                question = question.lower()
+                type = type.upper()
                 if question == '@':
                     question = ''
                 if type == 'A':

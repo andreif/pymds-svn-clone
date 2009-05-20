@@ -48,6 +48,7 @@ def serve():
         qid = None
         try:
             qid, question, qtype, qclass = parse_request(req_pkt)
+            question = map(lambda x: x.lower(), question)
             found = False
             for config in config_files.values():
                 if question[1:] == config['domain']:
@@ -64,7 +65,7 @@ def serve():
                 found = True
                 break
             if not found:
-                raise Exception("query is not for our domain: %s" % ".".join(question[1:]))
+                raise Exception("query is not for our domain: %s" % ".".join(question))
         except:
             raise
             if qid:
