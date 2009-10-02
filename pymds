@@ -67,7 +67,6 @@ def serve():
             if not found:
                 raise Exception("query is not for our domain: %s" % ".".join(question))
         except:
-            raise
             if qid:
                 resp_pkt = error_response(qid)
             else:
