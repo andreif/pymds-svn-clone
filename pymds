@@ -47,7 +47,12 @@ def serve():
             continue
         qid = None
         try:
-            qid, question, qtype, qclass = parse_request(req_pkt)
+            exception_rcode = None
+            try:
+                qid, question, qtype, qclass = parse_request(req_pkt)
+            except:
+                exception_rcode = 1
+                raise Exception("could not parse query")
             question = map(lambda x: x.lower(), question)
             found = False
             for config in config_files.values():
@@ -65,10 +70,13 @@ def serve():
                 found = True
                 break
             if not found:
+                exception_rcode = 3
                 raise Exception("query is not for our domain: %s" % ".".join(question))
         except:
             if qid:
-                resp_pkt = error_response(qid)
+                if exception_rcode is None:
+                    exception_rcode = 2
+                resp_pkt = format_response(qid, question, qtype, qclass, exception_rcode, [], [], [])
             else:
                 continue
         udps.sendto(resp_pkt, src_addr)
