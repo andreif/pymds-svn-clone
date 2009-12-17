@@ -69,8 +69,13 @@ class Source(object):
         f.close()
 
     def get_response(self, query, domain, qtype, qclass, src_addr):
-        if query in self._answers and qtype in self._answers[query]:
+        if query not in self._answers:
+            return 3, []
+        if qtype in self._answers[query]:
             results = [{'qtype': qtype, 'qclass':qclass, 'ttl': 500, 'rdata': answer} for answer in self._answers[query][qtype]]
             return 0, results
+        elif qtype == 1:
+            # if they asked for an A record and we didn't find one, check for a CNAME
+            return self.get_response(query, domain, 5, qclass, src_addr)
         else:
             return 3, []
